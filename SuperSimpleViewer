@@ -1,5 +1,4 @@
 """
-
 # Super Simple Viewer X #
 
 1. Select Image Folder: Button Click
@@ -10,9 +9,7 @@
 - Open Notepad: 'Ctrl + n'
 - Copy Image Path: 'Ctrl + c'
 - Copy Full Image Path: 'Ctrl + p'
-
 """
-
 from tkinter import *
 from PIL import Image, ImageTk
 from tkinter import filedialog
@@ -20,6 +17,7 @@ import os
 import pyperclip
 from datetime import datetime
 import subprocess  # Import subprocess to open Notepad
+import sqlite3
 
 class ImageViewer:
     def __init__(self, root):
@@ -28,46 +26,140 @@ class ImageViewer:
         self.images = []
         self.current_image_index = 0
         self.create_widgets()
+        
+        self.db_file_name = "image_viewer.db"
+        self.create_db()
+        
+        # 初期ウィンドウサイズを設定
+        self.root.geometry("1900x1024")  # 例としてウィンドウサイズを900x900に設定
+
+    def create_db(self):
+        conn = sqlite3.connect(self.db_file_name)
+        cursor = conn.cursor()
+        # 'prompt' カラムを追加
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS images (
+                id INTEGER PRIMARY KEY,
+                file_name TEXT UNIQUE,
+                description TEXT,
+                prompt TEXT  
+            )
+        """)
+        conn.commit()
+        conn.close()
+
+
+    def save_prompt(self):
+        # 画像のプロンプトを保存
+        prompt = self.prompt_entry.get("1.0", END)  # テキストボックス全体の内容を取得
+        file_name = self.get_file_name()
+        self.insert_or_update_db(file_name, self.description_entry.get("1.0", END), prompt)     
+   
+
+    # 以下の部分も修正が必要
+    def load_description(self):
+        file_name = self.get_file_name()
+        conn = sqlite3.connect(self.db_file_name)
+        cursor = conn.cursor()
+        cursor.execute("SELECT description FROM images WHERE file_name = ?", (file_name,))
+        row = cursor.fetchone()
+        
+        # テキストボックスをクリアする
+        self.description_entry.delete("1.0", END)
+
+        if row:
+            # データベースに説明がある場合、テキストボックスにセットする
+            self.description_entry.insert("1.0", row[0])
+        
+    def load_prompt(self):
+        file_name = self.get_file_name()
+        conn = sqlite3.connect(self.db_file_name)
+        cursor = conn.cursor()
+        cursor.execute("SELECT prompt FROM images WHERE file_name = ?", (file_name,))
+        row = cursor.fetchone()
+        self.prompt_entry.delete("1.0", END)
+        if row and row[0] is not None:
+            self.prompt_entry.insert("1.0", row[0])
+        
+    def insert_or_update_db(self, file_name, description, prompt):
+        # データベースに説明とプロンプトを保存または更新
+        conn = sqlite3.connect(self.db_file_name)
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO images (file_name, description, prompt) 
+            VALUES (?, ?, ?)
+            ON CONFLICT(file_name) DO UPDATE SET description = ?, prompt = ?
+        """, (file_name, description, prompt, description, prompt))
+        conn.commit()
+        conn.close()
+
+    def clear_description(self):
+        # テキストボックスを空にする
+        self.description_entry.delete(0, END)
 
     def create_widgets(self):
-        folder_button = Button(self.root, text="Select Image Folder", command=self.choose_folder)
+        folder_button = Button(self.root, text="画像フォルダを選択", command=self.choose_folder)
         folder_button.pack()
 
-        prev_button = Button(self.root, text="Previous", command=self.show_prev_image, state=DISABLED)
+        prev_button = Button(self.root, text="前へ", command=self.show_prev_image, state=DISABLED)
         prev_button.pack(side=LEFT)
         self.prev_button = prev_button
 
-        next_button = Button(self.root, text="Next", command=self.show_next_image, state=DISABLED)
+        next_button = Button(self.root, text="次へ", command=self.show_next_image, state=DISABLED)
         next_button.pack(side=RIGHT)
         self.next_button = next_button
 
-        self.label = Label(self.root, text="Please select an image folder")
+        self.label = Label(self.root, text="画像フォルダを選択してください")
         self.label.pack()
 
-        self.file_path_label = Label(self.root, text="File Name: ")
+        self.file_path_label = Label(self.root, text="ファイル名: ")  # ラベル名を変更
         self.file_path_label.pack()
 
         self.label.bind("<Button-3>", self.copy_image_path_to_clipboard)
 
-        # Shortcut keys.
-
-        # Previous: d (or) return
-        self.root.bind('<d>', self.on_return_key)
+        # リターンキーで次へシフトキー+リターンキーで戻る
         self.root.bind('<Return>', self.on_return_key)
-        # Return: s (or) shift + return
-        self.root.bind('<a>', self.on_shift_return_key)
-        self.root.bind('<Shift-Return>', self.on_shift_return_key)                     
-        # Open Notepad: Ctrl + n
-        self.root.bind('<Control-n>', self.open_notepad)
-        # Copy image path: Ctrl + c
-        self.root.bind('<Control-c>', self.copy_file_name_to_clipboard)
-        # Copy full image path: Ctrl + p
+        self.root.bind('<Shift-Return>', self.on_shift_return_key)
+        # Ctrl+pで画像フルパスコピー
         self.root.bind('<Control-p>', self.copy_image_path_to_clipboard_shortcut)
+        # Shift+nでノートパッド出現
+        self.root.bind('<Control-n>', self.open_notepad)
+        # Ctrl+fでファイル名コピー
+        self.root.bind('<Control-f>', self.copy_file_name_to_clipboard)
+        
+        
+        # 説明用のテキストボックスとプロンプト用のテキストボックスをフレーム内に配置
+        self.description_frame = Frame(self.root)
+        self.description_frame.pack()
+        
+        # 説明用のテキストボックス
+        self.description_label = Label(self.description_frame, text="画像の説明:")
+        self.description_label.pack(side=LEFT)
+
+        self.description_entry = Text(self.description_frame, width=50, height=4)
+        self.description_entry.pack(side=LEFT)  # 左側に配置
+
+        # プロンプト用のテキストボックス
+        self.prompt_label = Label(self.description_frame, text="画像のプロンプト:")
+        self.prompt_label.pack(side=LEFT)
+
+        self.prompt_entry = Text(self.description_frame, width=50, height=4)
+        self.prompt_entry.pack(side=LEFT)  # 左側に配置    
+     
+        ##############################
+        # 説明関連のボタン用のフレーム #
+        #############################
+        self.description_frame = Frame(self.root)
+        self.description_frame.pack()
+
+        # 説明を保存するボタン
+        self.save_prompt_button = Button(self.description_frame, text="保存", command=self.save_prompt)
+        self.save_prompt_button.pack(side=LEFT)      
 
     def choose_folder(self):
         self.image_folder = filedialog.askdirectory()
         if self.image_folder:
-            self.images = [f for f in os.listdir(self.image_folder) if f.endswith(('.png', '.jpg', '.jpeg', '.gif'))]
+            self.images = [f for f in os.listdir(self.image_folder) if f.endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp'))]
             if self.images:
                 self.images.sort(key=lambda x: datetime.fromtimestamp(os.path.getmtime(os.path.join(self.image_folder, x))), reverse=True)
                 self.current_image_index = 0
@@ -75,24 +167,48 @@ class ImageViewer:
                 self.update_ui()
 
     def load_image(self):
+        print("Loading image:", self.current_image_index)  # 現在のインデックスを表示
+        print("Total images:", len(self.images))  # 画像の総数を表示
+
+        if not self.images:
+            print("No images to display.")
+            return
+
+        self.load_description()
+        self.load_prompt()
+
         image_path = os.path.join(self.image_folder, self.images[self.current_image_index])
-        self.image = Image.open(image_path)
-        self.photo = ImageTk.PhotoImage(self.image)
-        self.label.configure(image=self.photo)
-        self.file_path_label.configure(text=f"File Name: {self.get_file_name()}")
+        print("Image path:", image_path)  # 読み込む画像のパスを表示
+
+        if not os.path.exists(image_path):
+            print("Image file not found:", image_path)
+            return
+
+        try:
+            image = Image.open(image_path)
+            max_size = (850, 850)
+            image.thumbnail(max_size, Image.ANTIALIAS)
+            self.photo = ImageTk.PhotoImage(image)
+            self.label.configure(image=self.photo)
+            self.file_path_label.configure(text=f"ファイル名: {self.get_file_name()}")
+        except Exception as e:
+            print("Error loading image:", e)
+
 
     def update_ui(self):
-        self.label.configure(text=f"Image Folder: {self.image_folder}")
+        self.label.configure(text=f"画像フォルダ: {self.image_folder}")
         self.label.pack()
         self.prev_button.config(state=NORMAL if len(self.images) > 1 else DISABLED)
         self.next_button.config(state=NORMAL if len(self.images) > 1 else DISABLED)
 
     def show_prev_image(self, event=None):
         self.current_image_index = (self.current_image_index - 1) % len(self.images)
+        print("Previous image index:", self.current_image_index)  # インデックスを表示
         self.load_image()
 
     def show_next_image(self, event=None):
         self.current_image_index = (self.current_image_index + 1) % len(self.images)
+        print("Next image index:", self.current_image_index)  # インデックスを表示
         self.load_image()
 
     def show_back_image(self, event=None):
@@ -130,5 +246,9 @@ if __name__ == "__main__":
     root.title("Simple Image Viewer")
 
     viewer = ImageViewer(root)
+
+    # 現在のカレントディレクトリを取得して表示
+    current_directory = os.getcwd()
+    print("カレントディレクトリ:", current_directory)
 
     root.mainloop()
